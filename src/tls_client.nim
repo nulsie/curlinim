@@ -157,6 +157,35 @@ proc postMultipart*(
 
   client.request("POST", url, reqHeaders, bodyStr)
 
+# --- response streaming & chunked iteration ---
+
+iterator iterContent*(response: Response, chunkSize: int = 8192): string =
+  # iterates through the response body in configurable chunk sizes
+  var pos = 0
+  let bodyLen = response.body.len
+  if bodyLen == 0:
+    yield ""
+  else:
+    while pos < bodyLen:
+      let endPos = min(pos + chunkSize, bodyLen)
+      yield response.body[pos..<endPos]
+      pos = endPos
+
+proc streamRequest*(
+    client: HttpClient,
+    httpMethod: string,
+    url: string,
+    onChunk: proc(chunk: string) {.closure.},
+    chunkSize: int = 8192,
+    headers: Table[string, string] = initTable[string, string](),
+    body: string = ""
+): Response =
+  # executes a request and streams the response body chunk-by-chunk via a callback procedure
+  let response = client.request(httpMethod, url, headers, body)
+  for chunk in response.iterContent(chunkSize):
+    onChunk(chunk)
+  return response
+
 # --- async wrappers ---
 
 proc requestAsync*(
