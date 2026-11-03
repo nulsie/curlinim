@@ -1,0 +1,6 @@
+version       = "0.1.0"
+author        = "nulsie"
+description   = "A http client in Nim"
+license       = "MIT"
+srcDir        = "."
+requires      = "nim >= 2.0.0"

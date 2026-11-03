@@ -1,0 +1,10 @@
+nimcache/
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+
+.DS_Store
+.vscode/
+.idea/
