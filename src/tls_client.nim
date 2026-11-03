@@ -1,4 +1,4 @@
-import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, io, os]
+import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os]
 import ./bindings
 
 type
@@ -20,6 +20,8 @@ type
     followRedirects*: bool
     sessionId*: string   # tracks the persistent session id
     proxy*: string        # proxy url config field
+    forceHttp1*: bool                 # force http/1.1 fallback instead of http/2
+    pseudoHeaderOrder*: seq[string]   # custom http/2 pseudo-header ordering
 
   # structure representing a form field or file upload part
   MultipartField* = object
@@ -34,6 +36,8 @@ proc newHttpClient*(
     followRedirects: bool = true, 
     sessionId: string = "",
     proxy: string = "",
+    forceHttp1: bool = false,
+    pseudoHeaderOrder: seq[string] = @[],
     libPath: string = "./binaries/libtls-client.so"
 ): HttpClient =
   loadTlsClient(libPath)
@@ -49,7 +53,9 @@ proc newHttpClient*(
     timeoutSeconds: timeoutSeconds, 
     followRedirects: followRedirects,
     sessionId: activeSessionId,
-    proxy: proxy
+    proxy: proxy,
+    forceHttp1: forceHttp1,
+    pseudoHeaderOrder: pseudoHeaderOrder
   )
 
 proc request*(
@@ -79,12 +85,19 @@ proc request*(
     "headers": headerJson,
     "headerOrder": headerOrder,
     "isByteRequest": false,
-    "isByteResponse": false
+    "isByteResponse": false,
+    "forceHttp1": client.forceHttp1
   }
 
   # inject proxyUrl into the payload if defined
   if client.proxy.len > 0:
     payload["proxyUrl"] = %client.proxy
+
+  if client.pseudoHeaderOrder.len > 0:
+    var phArray = newJArray()
+    for pseudo in client.pseudoHeaderOrder:
+      phArray.add(%pseudo)
+    payload["pseudoHeaderOrder"] = phArray
 
   if body.len > 0:
     payload["requestBody"] = %body
@@ -196,7 +209,7 @@ proc requestAsync*(
     body: string = ""
 ): Future[Response] {.async.} =
   let flowVar = spawn client.request(httpMethod, url, headers, body)
-  while not ready(flowVar):
+  while not isReady(flowVar):
     await sleepAsync(5)
   return ^flowVar
 
@@ -213,6 +226,6 @@ proc postMultipartAsync*(
     headers: Table[string, string] = initTable[string, string]()
 ): Future[Response] {.async.} =
   let flowVar = spawn client.postMultipart(url, fields, headers)
-  while not ready(flowVar):
+  while not isReady(flowVar):
     await sleepAsync(5)
   return ^flowVar
