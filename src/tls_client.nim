@@ -38,7 +38,7 @@ proc newHttpClient*(
     proxy: string = "",
     forceHttp1: bool = false,
     pseudoHeaderOrder: seq[string] = @[],
-    libPath: string = "./binaries/libtls-client.so"
+    libPath: string = defaultLibPath
 ): HttpClient =
   loadTlsClient(libPath)
   
@@ -105,8 +105,16 @@ proc request*(
   let rawResStr = executeRequest($payload)
   let jsonRes = parseJson(rawResStr)
 
+  # error check handling both string/int formats safely
   if jsonRes.hasKey("error") and jsonRes["error"].getBool():
-    raise newException(IOError, "TLS Client Error: " & jsonRes["status"].getStr())
+    let errMessage = 
+      if jsonRes.hasKey("message"): jsonRes["message"].getStr()
+      elif jsonRes.hasKey("status"): 
+        if jsonRes["status"].kind == JString: jsonRes["status"].getStr()
+        elif jsonRes["status"].kind == JInt: $jsonRes["status"].getInt()
+        else: "Unknown status type"
+      else: "Unknown TLS Client error"
+    raise newException(IOError, "TLS Client Error: " & errMessage)
 
   var respHeaders = initTable[string, seq[string]]()
   if jsonRes.hasKey("headers") and jsonRes["headers"].kind == JObject:
@@ -164,16 +172,22 @@ proc postMultipart*(
   let boundary = "----NimTlsClientBoundary" & $rand(100_000_000..999_999_999)
   let bodyStr = buildMultipartBody(fields, boundary)
 
-  # merge or set the content-type header with the dynamic boundary
+  # case-insensitive check to see if content-type was manually supplied
   var reqHeaders = headers
-  reqHeaders["Content-Type"] = "multipart/form-data; boundary=" & boundary
+  var hasContentType = false
+  for k, _ in reqHeaders:
+    if k.toLowerAscii() == "content-type":
+      hasContentType = true
+      break
+
+  if not hasContentType:
+    reqHeaders["Content-Type"] = "multipart/form-data; boundary=" & boundary
 
   client.request("POST", url, reqHeaders, bodyStr)
 
 # --- response streaming & chunked iteration ---
 
 iterator iterContent*(response: Response, chunkSize: int = 8192): string =
-  # iterates through the response body in configurable chunk sizes
   var pos = 0
   let bodyLen = response.body.len
   if bodyLen == 0:
@@ -193,7 +207,6 @@ proc streamRequest*(
     headers: Table[string, string] = initTable[string, string](),
     body: string = ""
 ): Response =
-  # executes a request and streams the response body chunk-by-chunk via a callback procedure
   let response = client.request(httpMethod, url, headers, body)
   for chunk in response.iterContent(chunkSize):
     onChunk(chunk)

@@ -9,7 +9,13 @@ var
   reqProc: TlsRequestProc
   freeProc: FreeMemoryProc
 
-proc loadTlsClient*(libPath: string = "./binaries/libtls-client.so") =
+# define other platform's default library paths too
+const defaultLibPath* = 
+  when defined(windows): "binaries/libtls-client.dll"
+  elif defined(macosx): "binaries/libtls-client.dylib"
+  else: "binaries/libtls-client.so"
+
+proc loadTlsClient*(libPath: string = defaultLibPath) =
   if lib != nil: return # already loaded
   
   lib = loadLib(libPath)
