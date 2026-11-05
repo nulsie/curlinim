@@ -18,6 +18,7 @@ type
     profile*: ClientProfile
     timeoutSeconds*: int
     followRedirects*: bool
+    insecureSkipVerify*: bool  # field for certificate verification control
     sessionId*: string   # tracks the persistent session id
     proxy*: string        # proxy url config field
     forceHttp1*: bool                 # force http/1.1 fallback instead of http/2
@@ -33,7 +34,8 @@ type
 proc newHttpClient*(
     profile: ClientProfile = cpChrome133, 
     timeoutSeconds: int = 30, 
-    followRedirects: bool = true, 
+    followRedirects: bool = true,
+    insecureSkipVerify: bool = false, # parameter for cvc (defaults to false for security) 
     sessionId: string = "",
     proxy: string = "",
     forceHttp1: bool = false,
@@ -52,6 +54,7 @@ proc newHttpClient*(
     profile: profile, 
     timeoutSeconds: timeoutSeconds, 
     followRedirects: followRedirects,
+    insecureSkipVerify: insecureSkipVerify,
     sessionId: activeSessionId,
     proxy: proxy,
     forceHttp1: forceHttp1,
@@ -76,7 +79,7 @@ proc request*(
   var payload = %* {
     "tlsClientIdentifier": $client.profile,
     "followRedirects": client.followRedirects,
-    "insecureSkipVerify": false,
+    "insecureSkipVerify": client.insecureSkipVerify,
     "withoutCookieJar": false,
     "timeoutSeconds": client.timeoutSeconds,
     "sessionId": client.sessionId,
@@ -145,6 +148,36 @@ proc get*(client: HttpClient, url: string, headers: Table[string, string] = init
 
 proc post*(client: HttpClient, url: string, body: string, headers: Table[string, string] = initTable[string, string]()): Response =
   client.request("POST", url, headers, body)
+
+proc put*(
+    client: HttpClient, 
+    url: string, 
+    body: string = "", 
+    headers: Table[string, string] = initTable[string, string]()
+): Response =
+  client.request("PUT", url, headers, body)
+
+proc delete*(
+    client: HttpClient, 
+    url: string, 
+    headers: Table[string, string] = initTable[string, string]()
+): Response =
+  client.request("DELETE", url, headers)
+
+proc patch*(
+    client: HttpClient, 
+    url: string, 
+    body: string = "", 
+    headers: Table[string, string] = initTable[string, string]()
+): Response =
+  client.request("PATCH", url, headers, body)
+
+proc head*(
+    client: HttpClient, 
+    url: string, 
+    headers: Table[string, string] = initTable[string, string]()
+): Response =
+  client.request("HEAD", url, headers)
 
 # --- multipart form data builder & handlers
 
@@ -243,6 +276,36 @@ proc postMultipartAsync*(
     await sleepAsync(5)
   return ^flowVar
 
+proc putAsync*(
+    client: HttpClient, 
+    url: string, 
+    body: string = "", 
+    headers: Table[string, string] = initTable[string, string]()
+): Future[Response] {.async.} =
+  return await client.requestAsync("PUT", url, headers, body = body)
+
+proc deleteAsync*(
+    client: HttpClient, 
+    url: string, 
+    headers: Table[string, string] = initTable[string, string]()
+): Future[Response] {.async.} =
+  return await client.requestAsync("DELETE", url, headers)
+
+proc patchAsync*(
+    client: HttpClient, 
+    url: string, 
+    body: string = "", 
+    headers: Table[string, string] = initTable[string, string]()
+): Future[Response] {.async.} =
+  return await client.requestAsync("PATCH", url, headers, body = body)
+
+proc headAsync*(
+    client: HttpClient, 
+    url: string, 
+    headers: Table[string, string] = initTable[string, string]()
+): Future[Response] {.async.} =
+  return await client.requestAsync("HEAD", url, headers)
+
 # --- destructor hooks ---
 
 proc close*(client: var HttpClient) =
@@ -256,3 +319,26 @@ proc `=destroy*(client: var HttpClient) =
       executeDestroySession(client.sessionId)
     except:
       discard # Destructors must suppress exceptions to avoid crashing runtime unwinding
+
+# --- cookie jar export/import utils ---
+
+proc exportCookieHeader*(cookies: Table[string, string]): string =
+  var parts: seq[string] = @[]
+  for k, v in cookies:
+    parts.add(k & "=" & v)
+  result = parts.join("; ")
+
+proc exportCookiesToJson*(response: Response): string =
+  var jObj = newJObject()
+  for k, v in response.cookies:
+    jObj[k] = %v
+  result = $jObj
+
+proc importCookiesFromJson*(jsonStr: string): Table[string, string] =
+  var res = initTable[string, string]()
+  let node = parseJson(jsonStr)
+  if node.kind == JObject:
+    for k, v in node:
+      if v.kind == JString:
+        res[k] = v.getStr()
+  result = res
