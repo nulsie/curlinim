@@ -242,3 +242,17 @@ proc postMultipartAsync*(
   while not isReady(flowVar):
     await sleepAsync(5)
   return ^flowVar
+
+# --- destructor hooks ---
+
+proc close*(client: var HttpClient) =
+  if client.sessionId.len > 0:
+    executeDestroySession(client.sessionId)
+    client.sessionId = "" # Prevent double destruction
+
+proc `=destroy*(client: var HttpClient) =
+  if client.sessionId.len > 0:
+    try:
+      executeDestroySession(client.sessionId)
+    except:
+      discard # Destructors must suppress exceptions to avoid crashing runtime unwinding
