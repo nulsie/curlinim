@@ -1,5 +1,4 @@
-import std/dynlib
-import std/json
+import std/[dynlib, os, httpclient, strutils, json]
 
 type
   TlsRequestProc = proc(rawPayload: cstring): cstring {.cdecl, gcsafe.}
@@ -18,8 +17,58 @@ const defaultLibPath* =
   elif defined(macosx): "binaries/libtls-client.dylib"
   else: "binaries/libtls-client.so"
 
+# added a dynamic lib downloader for simplicity's sake so i and you don't want to manually source tls-client sl
+# this maps the current os and cpu arch to the tls-client release binary
+proc getDownloadUrl*(): string =
+  let version = "v1.16.0" # target release version
+  when defined(windows):
+    when defined(amd64):
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-windows-amd64-" & version & ".dll"
+    else:
+      result = ""
+  elif defined(macosx):
+    when defined(arm64):
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-darwin-arm64-" & version & ".dylib"
+    else:
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-darwin-amd64-" & version & ".dylib"
+  else: # Linux
+    when defined(amd64):
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-linux-amd64-" & version & ".so"
+    elif defined(arm64):
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-linux-arm64-" & version & ".so"
+    else:
+      result = ""
+      
+# this checks if the shared library exists locally and ifits not downloads it automatically
+proc ensureBinaryExists*(libPath: string) =
+  if fileExists(libPath):
+    return
+  
+  let dir = extractFileDir(libPath)
+  if dir.len > 0 and not dirExists(dir):
+    createDir(dir)
+
+  let url = getDownloadUrl()
+  if url.len == 0:
+    raise newException(IOError, "Unsupported platform or architecture for automatic tls-client binary download.")
+
+  echo "[tls-client] Binary not found locally. Downloading matching release..."
+  echo "[tls-client] Source: ", url
+  
+  var httpClient = newHttpClient()
+  try:
+    httpClient.downloadFile(url, libPath)
+    echo "[tls-client] Successfully downloaded library to: ", libPath
+  except Exception as e:
+    raise newException(IOError, "Failed to auto-download tls-client shared library: " & e.msg)
+  finally:
+    httpClient.close()
+
 proc loadTlsClient*(libPath: string = defaultLibPath) =
   if lib != nil: return # already loaded
+
+  # bootstrap the binary if missing before loading
+  ensureBinaryExists(libPath)
   
   lib = loadLib(libPath)
   if lib == nil:
