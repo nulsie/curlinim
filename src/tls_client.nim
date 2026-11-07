@@ -1,4 +1,4 @@
-import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os]
+import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os, locks]
 import ./bindings
 
 type
@@ -14,7 +14,7 @@ type
     cookies*: Table[string, string]
     rawJson*: JsonNode
 
-  HttpClient* = object
+  HttpClient* = ref object
     profile*: ClientProfile
     timeoutSeconds*: int
     followRedirects*: bool
@@ -23,6 +23,7 @@ type
     proxy*: string        # proxy url config field
     forceHttp1*: bool                 # force http/1.1 fallback instead of http/2
     pseudoHeaderOrder*: seq[string]   # custom http/2 pseudo-header ordering
+    lock*: Lock # Thread lock for guarding session access
 
   # structure representing a form field or file upload part
   MultipartField* = object
@@ -35,7 +36,7 @@ proc newHttpClient*(
     profile: ClientProfile = cpChrome133, 
     timeoutSeconds: int = 30, 
     followRedirects: bool = true,
-    insecureSkipVerify: bool = false, # parameter for cvc (defaults to false for security) 
+    insecureSkipVerify: bool = false, 
     sessionId: string = "",
     proxy: string = "",
     forceHttp1: bool = false,
@@ -44,22 +45,22 @@ proc newHttpClient*(
 ): HttpClient =
   loadTlsClient(libPath)
   
-  # auto-generate a unique session id if one isn't provided
   var activeSessionId = sessionId
   if activeSessionId.len == 0:
     randomize()
     activeSessionId = "session_" & $rand(100_000..999_999)
 
-  HttpClient(
-    profile: profile, 
-    timeoutSeconds: timeoutSeconds, 
-    followRedirects: followRedirects,
-    insecureSkipVerify: insecureSkipVerify,
-    sessionId: activeSessionId,
-    proxy: proxy,
-    forceHttp1: forceHttp1,
-    pseudoHeaderOrder: pseudoHeaderOrder
-  )
+  new(result)
+  result.profile = profile
+  result.timeoutSeconds = timeoutSeconds
+  result.followRedirects = followRedirects
+  result.insecureSkipVerify = insecureSkipVerify
+  result.sessionId = activeSessionId
+  result.proxy = proxy
+  result.forceHttp1 = forceHttp1
+  result.pseudoHeaderOrder = pseudoHeaderOrder
+  
+  initLock(result.lock)
 
 proc request*(
     client: HttpClient, 
@@ -75,7 +76,6 @@ proc request*(
     headerJson[k] = %v
     headerOrder.add(%k)
 
-  # build the base payload including the persistent sessionId
   var payload = %* {
     "tlsClientIdentifier": $client.profile,
     "followRedirects": client.followRedirects,
@@ -92,7 +92,6 @@ proc request*(
     "forceHttp1": client.forceHttp1
   }
 
-  # inject proxyUrl into the payload if defined
   if client.proxy.len > 0:
     payload["proxyUrl"] = %client.proxy
 
@@ -105,10 +104,15 @@ proc request*(
   if body.len > 0:
     payload["requestBody"] = %body
 
-  let rawResStr = executeRequest($payload)
+  # thread safety guard
+  acquire(client.lock)
+  let rawResStr = try:
+    executeRequest($payload)
+  finally:
+    release(client.lock)
+
   let jsonRes = parseJson(rawResStr)
 
-  # error check handling both string/int formats safely
   if jsonRes.hasKey("error") and jsonRes["error"].getBool():
     let errMessage = 
       if jsonRes.hasKey("message"): jsonRes["message"].getStr()
@@ -308,12 +312,17 @@ proc headAsync*(
 
 # --- destructor hooks ---
 
-proc close*(client: var HttpClient) =
-  if client.sessionId.len > 0:
-    executeDestroySession(client.sessionId)
-    client.sessionId = "" # Prevent double destruction
+proc close*(client: HttpClient) =
+  acquire(client.lock)
+  try:
+    if client.sessionId.len > 0:
+      executeDestroySession(client.sessionId)
+      client.sessionId = ""
+  finally:
+    release(client.lock)
+    deinitLock(client.lock)
 
-proc `=destroy*(client: var HttpClient) =
+proc `=destroy*(client: var typeof(HttpClient()[])) =
   if client.sessionId.len > 0:
     try:
       executeDestroySession(client.sessionId)
