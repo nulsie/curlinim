@@ -44,7 +44,7 @@ proc ensureBinaryExists*(libPath: string) =
   if fileExists(libPath):
     return
   
-  let dir = extractFileDir(libPath)
+  let dir = parentDir(libPath) # changed from extractFileDir to parentDir as that is what stdlib use
   if dir.len > 0 and not dirExists(dir):
     createDir(dir)
 

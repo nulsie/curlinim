@@ -1,4 +1,4 @@
-import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os, locks]
+import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os]
 import ./bindings
 
 type
@@ -14,7 +14,7 @@ type
     cookies*: Table[string, string]
     rawJson*: JsonNode
 
-  HttpClientObj* = object
+  HttpClientObj = object
     profile*: ClientProfile
     timeoutSeconds*: int
     followRedirects*: bool
@@ -23,7 +23,7 @@ type
     proxy*: string        # proxy url config field
     forceHttp1*: bool                 # force http/1.1 fallback instead of http/2
     pseudoHeaderOrder*: seq[string]   # custom http/2 pseudo-header ordering
-    lock*: Lock # Thread lock for guarding session access
+    # removed the lock field as it caused compilation err bec nim 2.x do the destructor handlers for objs with lock
 
   HttpClient* = ref HttpClientObj
 
@@ -61,8 +61,6 @@ proc newHttpClient*(
   result.proxy = proxy
   result.forceHttp1 = forceHttp1
   result.pseudoHeaderOrder = pseudoHeaderOrder
-  
-  initLock(result.lock)
 
 proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
   # creates a duplicate client configuration with an isolated sessionid
@@ -124,12 +122,7 @@ proc request*(
   if body.len > 0:
     payload["requestBody"] = %body
 
-  # thread safety guard
-  acquire(client.lock)
-  let rawResStr = try:
-    executeRequest($payload)
-  finally:
-    release(client.lock)
+  let rawResStr = executeRequest($payload)
 
   let jsonRes = parseJson(rawResStr)
 
@@ -346,27 +339,9 @@ proc headAsync*(
 
 proc close*(client: HttpClient) =
   if client == nil: return
-  acquire(client.lock)
-  try:
-    if client.sessionId.len > 0:
-      executeDestroySession(client.sessionId)
-      client.sessionId = ""
-  finally:
-    release(client.lock)
-    # leave deinitLock out of close() so it's safely handled 
-    # exclusively by the destructor upon garbage collectionpreventing double-frees
-
-proc `=destroy*(client: var HttpClientObj) =
   if client.sessionId.len > 0:
-    try:
-      executeDestroySession(client.sessionId)
-    except:
-      discard # suppress exceptions during unwinding
-  # always ensure os mutex locks are deinitialized to prevent resource leaks
-  try:
-    deinitLock(client.lock)
-  except:
-    discard
+    executeDestroySession(client.sessionId)
+    client.sessionId = ""
 
 # --- cookie jar export/import utils ---
 
