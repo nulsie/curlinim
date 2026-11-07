@@ -32,6 +32,24 @@ type
     filename*: string     # leave empty if it's a standard text form field
     contentType*: string 
 
+proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
+  # creates a duplicate client configuration with an isolated sessionid
+  var sid = newSessionId
+  if sid.len == 0:
+    randomize()
+    sid = "session_" & $rand(100_000..999_999)
+
+  newHttpClient(
+    profile = client.profile,
+    timeoutSeconds = client.timeoutSeconds,
+    followRedirects = client.followRedirects,
+    insecureSkipVerify = client.insecureSkipVerify,
+    sessionId = sid,
+    proxy = client.proxy,
+    forceHttp1 = client.forceHttp1,
+    pseudoHeaderOrder = client.pseudoHeaderOrder
+  )
+
 proc newHttpClient*(
     profile: ClientProfile = cpChrome133, 
     timeoutSeconds: int = 30, 
