@@ -14,7 +14,7 @@ type
     cookies*: Table[string, string]
     rawJson*: JsonNode
 
-  HttpClient* = ref object
+  HttpClientObj* = object
     profile*: ClientProfile
     timeoutSeconds*: int
     followRedirects*: bool
@@ -25,30 +25,14 @@ type
     pseudoHeaderOrder*: seq[string]   # custom http/2 pseudo-header ordering
     lock*: Lock # Thread lock for guarding session access
 
+  HttpClient* = ref HttpClientObj
+
   # structure representing a form field or file upload part
   MultipartField* = object
     name*: string
     value*: string
     filename*: string     # leave empty if it's a standard text form field
     contentType*: string 
-
-proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
-  # creates a duplicate client configuration with an isolated sessionid
-  var sid = newSessionId
-  if sid.len == 0:
-    randomize()
-    sid = "session_" & $rand(100_000..999_999)
-
-  newHttpClient(
-    profile = client.profile,
-    timeoutSeconds = client.timeoutSeconds,
-    followRedirects = client.followRedirects,
-    insecureSkipVerify = client.insecureSkipVerify,
-    sessionId = sid,
-    proxy = client.proxy,
-    forceHttp1 = client.forceHttp1,
-    pseudoHeaderOrder = client.pseudoHeaderOrder
-  )
 
 proc newHttpClient*(
     profile: ClientProfile = cpChrome133, 
@@ -79,6 +63,24 @@ proc newHttpClient*(
   result.pseudoHeaderOrder = pseudoHeaderOrder
   
   initLock(result.lock)
+
+proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
+  # creates a duplicate client configuration with an isolated sessionid
+  var sid = newSessionId
+  if sid.len == 0:
+    randomize()
+    sid = "session_" & $rand(100_000..999_999)
+
+  newHttpClient(
+    profile = client.profile,
+    timeoutSeconds = client.timeoutSeconds,
+    followRedirects = client.followRedirects,
+    insecureSkipVerify = client.insecureSkipVerify,
+    sessionId = sid,
+    proxy = client.proxy,
+    forceHttp1 = client.forceHttp1,
+    pseudoHeaderOrder = client.pseudoHeaderOrder
+  )
 
 proc request*(
     client: HttpClient, 
@@ -276,7 +278,14 @@ proc requestAsync*(
     headers: Table[string, string] = initTable[string, string](),
     body: string = ""
 ): Future[Response] {.async.} =
-  let flowVar = spawn client.request(httpMethod, url, headers, body)
+  # pass isolated parameters instead of spawning the raw client ref containing lock
+  let cClient = client
+  let cMethod = httpMethod
+  let cUrl = url
+  let cHeaders = headers
+  let cBody = body
+
+  let flowVar = spawn cClient.request(cMethod, cUrl, cHeaders, cBody)
   while not isReady(flowVar):
     await sleepAsync(5)
   return ^flowVar
@@ -293,7 +302,12 @@ proc postMultipartAsync*(
     fields: seq[MultipartField], 
     headers: Table[string, string] = initTable[string, string]()
 ): Future[Response] {.async.} =
-  let flowVar = spawn client.postMultipart(url, fields, headers)
+  let cClient = client
+  let cUrl = url
+  let cFields = fields
+  let cHeaders = headers
+
+  let flowVar = spawn cClient.postMultipart(cUrl, cFields, cHeaders)
   while not isReady(flowVar):
     await sleepAsync(5)
   return ^flowVar
@@ -331,6 +345,7 @@ proc headAsync*(
 # --- destructor hooks ---
 
 proc close*(client: HttpClient) =
+  if client == nil: return
   acquire(client.lock)
   try:
     if client.sessionId.len > 0:
@@ -338,14 +353,20 @@ proc close*(client: HttpClient) =
       client.sessionId = ""
   finally:
     release(client.lock)
-    deinitLock(client.lock)
+    # leave deinitLock out of close() so it's safely handled 
+    # exclusively by the destructor upon garbage collectionpreventing double-frees
 
-proc `=destroy*(client: var typeof(HttpClient()[])) =
+proc `=destroy*(client: var HttpClientObj) =
   if client.sessionId.len > 0:
     try:
       executeDestroySession(client.sessionId)
     except:
-      discard # Destructors must suppress exceptions to avoid crashing runtime unwinding
+      discard # suppress exceptions during unwinding
+  # always ensure os mutex locks are deinitialized to prevent resource leaks
+  try:
+    deinitLock(client.lock)
+  except:
+    discard
 
 # --- cookie jar export/import utils ---
 
