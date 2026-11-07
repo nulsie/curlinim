@@ -12,39 +12,53 @@ var
   freeProc: FreeMemoryProc
 
 # define other platform's default library paths too
-const defaultLibPath* = 
-  when defined(windows): "binaries/libtls-client.dll"
-  elif defined(macosx): "binaries/libtls-client.dylib"
-  else: "binaries/libtls-client.so"
+# target release version tied to this wrapper version
+const 
+  TlsClientVersion* = "v1.16.0"
+  defaultLibPath* = 
+    when defined(windows): "binaries/libtls-client.dll"
+    elif defined(macosx): "binaries/libtls-client.dylib"
+    else: "binaries/libtls-client.so"
 
 # added a dynamic lib downloader for simplicity's sake so i and you don't want to manually source tls-client sl
 # this maps the current os and cpu arch to the tls-client release binary
 proc getDownloadUrl*(): string =
-  let version = "v1.16.0" # target release version
   when defined(windows):
     when defined(amd64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-windows-amd64-" & version & ".dll"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-windows-amd64-" & TlsClientVersion & ".dll"
     else:
       result = ""
   elif defined(macosx):
     when defined(arm64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-darwin-arm64-" & version & ".dylib"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-darwin-arm64-" & TlsClientVersion & ".dylib"
     else:
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-darwin-amd64-" & version & ".dylib"
-  else: # Linux
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-darwin-amd64-" & TlsClientVersion & ".dylib"
+  else: # linux
     when defined(amd64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-linux-amd64-" & version & ".so"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-linux-amd64-" & TlsClientVersion & ".so"
     elif defined(arm64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & version & "/libtls-client-linux-arm64-" & version & ".so"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-linux-arm64-" & TlsClientVersion & ".so"
     else:
       result = ""
       
 # this checks if the shared library exists locally and ifits not downloads it automatically
 proc ensureBinaryExists*(libPath: string) =
-  if fileExists(libPath):
+  let versionFilePath = libPath & ".version"
+  let binaryExists = fileExists(libPath)
+  var currentVersion = ""
+
+  # read existing version metadata if present
+  if binaryExists and fileExists(versionFilePath):
+    try:
+      currentVersion = readFile(versionFilePath).strip()
+    except:
+      currentVersion = ""
+
+  # if binary exists and version matches then gud
+  if binaryExists and currentVersion == TlsClientVersion:
     return
-  
-  let dir = parentDir(libPath) # changed from extractFileDir to parentDir as that is what stdlib use
+
+  let dir = extractFileDir(libPath)
   if dir.len > 0 and not dirExists(dir):
     createDir(dir)
 
@@ -52,15 +66,21 @@ proc ensureBinaryExists*(libPath: string) =
   if url.len == 0:
     raise newException(IOError, "Unsupported platform or architecture for automatic tls-client binary download.")
 
-  echo "[tls-client] Binary not found locally. Downloading matching release..."
+  if binaryExists:
+    echo "[tls-client] Updating local binary from version '", currentVersion, "' to '", TlsClientVersion, "'..."
+  else:
+    echo "[tls-client] Binary not found locally. Downloading release version ", TlsClientVersion, "..."
+  
   echo "[tls-client] Source: ", url
   
   var httpClient = newHttpClient()
   try:
     httpClient.downloadFile(url, libPath)
-    echo "[tls-client] Successfully downloaded library to: ", libPath
+    # write version stamp upon successful download
+    writeFile(versionFilePath, TlsClientVersion)
+    echo "[tls-client] Successfully updated library and version stamp to: ", TlsClientVersion
   except Exception as e:
-    raise newException(IOError, "Failed to auto-download tls-client shared library: " & e.msg)
+    raise newException(IOError, "Failed to auto-download/update tls-client shared library: " & e.msg)
   finally:
     httpClient.close()
 
