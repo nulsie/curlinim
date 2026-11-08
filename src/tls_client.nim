@@ -85,11 +85,18 @@ proc rotateProxy*(client: HttpClient) =
     client.currentProxy = client.proxyRotator.nextProxy()
 
 proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
-  # creates a duplicate client configuration with an isolated sessionid
+  # creates an isolated worker clone with a new unique sessionid for the worker-clone pattern which is afix for the risks of
+  # removing the lock guards
   var sid = newSessionId
   if sid.len == 0:
     randomize()
     sid = "session_" & $rand(100_000..999_999)
+
+  # extract existing proxy pool urls from rotator if present
+  var pool: seq[string] = @[]
+  if client.proxyRotator != nil:
+    for p in client.proxyRotator.proxies:
+      pool.add(p.rawUrl)
 
   newHttpClient(
     profile = client.profile,
@@ -97,8 +104,10 @@ proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
     followRedirects = client.followRedirects,
     insecureSkipVerify = client.insecureSkipVerify,
     sessionId = sid,
-    proxy = client.proxy,
+    proxyPool = pool,
+    rotationStrategy = if client.proxyRotator != nil: client.proxyRotator.strategy else: rsRoundRobin,
     forceHttp1 = client.forceHttp1,
+    enableHttp3 = client.enableHttp3,
     pseudoHeaderOrder = client.pseudoHeaderOrder
   )
 
@@ -109,6 +118,14 @@ proc request*(
     headers: Table[string, string] = initTable[string, string](),
     body: string = ""
 ): Response =
+  # evaluate active proxy and enforce http/3 safety checks
+  var activeProxy = client.currentProxy
+  var allowHttp3 = client.enableHttp3
+    
+  if activeProxy.len > 0:
+    let proxyCfg = parseProxyUrl(activeProxy)[cite: 4]
+    ensureProxyHttp3Safe(proxyCfg, allowHttp3)
+
   var headerJson = newJObject()
   var headerOrder = newJArray()
 
@@ -132,8 +149,8 @@ proc request*(
     "forceHttp1": client.forceHttp1
   }
 
-  if client.proxy.len > 0:
-    payload["proxyUrl"] = %client.proxy
+  if activeProxy.len > 0:
+    payload["proxyUrl"] = %activeProxy
 
   if client.pseudoHeaderOrder.len > 0:
     var phArray = newJArray()
