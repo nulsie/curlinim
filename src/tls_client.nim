@@ -1,5 +1,6 @@
 import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os]
 import ./bindings
+import ./proxy_manager
 
 type
   ClientProfile* = enum
@@ -20,8 +21,11 @@ type
     followRedirects*: bool
     insecureSkipVerify*: bool  # field for certificate verification control
     sessionId*: string   # tracks the persistent session id
+    proxyRotator*: ProxyRotator   # added for adding the rotator support
+    currentProxy*: string 
     proxy*: string        # proxy url config field
     forceHttp1*: bool                 # force http/1.1 fallback instead of http/2
+    enableHttp3*: bool # the http/3 enabler flag
     pseudoHeaderOrder*: seq[string]   # custom http/2 pseudo-header ordering
     # removed the lock field as it caused compilation err bec nim 2.x do the destructor handlers for objs with lock
 
@@ -41,7 +45,10 @@ proc newHttpClient*(
     insecureSkipVerify: bool = false, 
     sessionId: string = "",
     proxy: string = "",
+    proxyPool: seq[string] = @[],
+    rotationStrategy: RotationStrategy = rsRoundRobin,
     forceHttp1: bool = false,
+    enableHttp3: bool = false,
     pseudoHeaderOrder: seq[string] = @[],
     libPath: string = defaultLibPath
 ): HttpClient =
@@ -52,15 +59,30 @@ proc newHttpClient*(
     randomize()
     activeSessionId = "session_" & $rand(100_000..999_999)
 
+  # init rotator from single proxy or proxy pool
+  var pool = proxyPool
+  if pool.len == 0 and proxy.len > 0:
+    pool = @[proxy]
+    
+  let rotator = newProxyRotator(pool, rotationStrategy)
+  let initialProxy = if rotator.proxies.len > 0: rotator.nextProxy() else: ""
+
   new(result)
   result.profile = profile
   result.timeoutSeconds = timeoutSeconds
   result.followRedirects = followRedirects
   result.insecureSkipVerify = insecureSkipVerify
   result.sessionId = activeSessionId
-  result.proxy = proxy
+  result.proxyRotator = rotator
+  result.currentProxy = initialProxy
   result.forceHttp1 = forceHttp1
+  result.enableHttp3 = enableHttp3
   result.pseudoHeaderOrder = pseudoHeaderOrder
+
+proc rotateProxy*(client: HttpClient) =
+  if client == nil: return
+  if client.proxyRotator != nil and client.proxyRotator.proxies.len > 0:
+    client.currentProxy = client.proxyRotator.nextProxy()
 
 proc clone*(client: HttpClient, newSessionId: string = ""): HttpClient =
   # creates a duplicate client configuration with an isolated sessionid
