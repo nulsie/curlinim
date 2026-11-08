@@ -28,6 +28,7 @@ type
     enableHttp3*: bool # the http/3 enabler flag
     pseudoHeaderOrder*: seq[string]   # custom http/2 pseudo-header ordering
     # removed the lock field as it caused compilation err bec nim 2.x do the destructor handlers for objs with lock
+    basePayloadJson*: JsonNode # to cache json template
 
   HttpClient* = ref HttpClientObj
 
@@ -67,6 +68,28 @@ proc newHttpClient*(
   let rotator = newProxyRotator(pool, rotationStrategy)
   let initialProxy = if rotator.proxies.len > 0: rotator.nextProxy() else: ""
 
+  # --- Pre-build the static payload template ---
+  var baseJson = %* {
+    "tlsClientIdentifier": $profile,
+    "followRedirects": followRedirects,
+    "insecureSkipVerify": insecureSkipVerify,
+    "withoutCookieJar": false,
+    "timeoutSeconds": timeoutSeconds,
+    "sessionId": activeSessionId,
+    "forceHttp1": forceHttp1,
+    "isByteRequest": false,
+    "isByteResponse": false
+  }
+  
+  if initialProxy.len > 0:
+    baseJson["proxyUrl"] = %initialProxy
+  
+  if pseudoHeaderOrder.len > 0:
+    var phArray = newJArray()
+    for pseudo in pseudoHeaderOrder:
+      phArray.add(%pseudo)
+    baseJson["pseudoHeaderOrder"] = phArray
+
   new(result)
   result.profile = profile
   result.timeoutSeconds = timeoutSeconds
@@ -78,6 +101,7 @@ proc newHttpClient*(
   result.forceHttp1 = forceHttp1
   result.enableHttp3 = enableHttp3
   result.pseudoHeaderOrder = pseudoHeaderOrder
+  result.basePayloadJson = baseJson
 
 proc rotateProxy*(client: HttpClient) =
   if client == nil: return
@@ -118,12 +142,11 @@ proc request*(
     headers: Table[string, string] = initTable[string, string](),
     body: string = ""
 ): Response =
-  # evaluate active proxy and enforce http/3 safety checks
   var activeProxy = client.currentProxy
   var allowHttp3 = client.enableHttp3
     
   if activeProxy.len > 0:
-    let proxyCfg = parseProxyUrl(activeProxy)[cite: 4]
+    let proxyCfg = parseProxyUrl(activeProxy)
     ensureProxyHttp3Safe(proxyCfg, allowHttp3)
 
   var headerJson = newJObject()
@@ -133,36 +156,23 @@ proc request*(
     headerJson[k] = %v
     headerOrder.add(%k)
 
-  var payload = %* {
-    "tlsClientIdentifier": $client.profile,
-    "followRedirects": client.followRedirects,
-    "insecureSkipVerify": client.insecureSkipVerify,
-    "withoutCookieJar": false,
-    "timeoutSeconds": client.timeoutSeconds,
-    "sessionId": client.sessionId,
-    "requestUrl": url,
-    "requestMethod": httpMethod.toUpperAscii(),
-    "headers": headerJson,
-    "headerOrder": headerOrder,
-    "isByteRequest": false,
-    "isByteResponse": false,
-    "forceHttp1": client.forceHttp1
-  }
+  # zero-alloc optim copy base template instead of rebuilding
+  var payload = client.basePayloadJson.copy()
 
-  if activeProxy.len > 0:
-    payload["proxyUrl"] = %activeProxy
-
-  if client.pseudoHeaderOrder.len > 0:
-    var phArray = newJArray()
-    for pseudo in client.pseudoHeaderOrder:
-      phArray.add(%pseudo)
-    payload["pseudoHeaderOrder"] = phArray
+  # inject dynamic req-specific fields
+  payload["requestUrl"] = %url
+  payload["requestMethod"] = %httpMethod.toUpperAscii()
+  payload["headers"] = headerJson
+  payload["headerOrder"] = headerOrder
 
   if body.len > 0:
     payload["requestBody"] = %body
+  else:
+    # safely clear requestBody if it was populated in a previous request loop
+    if payload.hasKey("requestBody"):
+      payload.delete("requestBody")
 
   let rawResStr = executeRequest($payload)
-
   let jsonRes = parseJson(rawResStr)
 
   if jsonRes.hasKey("error") and jsonRes["error"].getBool():
