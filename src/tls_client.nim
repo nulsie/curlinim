@@ -386,6 +386,13 @@ proc headAsync*(
 
 # --- destructor hooks ---
 
+proc `=destroy`(clientObj: var HttpClientObj) =
+  # automatically invoked by nim 2.x when HttpClientObj goes out of scope 
+  # or its ref count drops to zero this prevents go-side session leaks
+  if clientObj.sessionId.len > 0:
+    executeDestroySession(clientObj.sessionId)
+    clientObj.sessionId = ""
+
 proc close*(client: HttpClient) =
   if client == nil: return
   if client.sessionId.len > 0:
