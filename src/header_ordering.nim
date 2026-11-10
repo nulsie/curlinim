@@ -1,6 +1,7 @@
 import std/[json, tables, strutils]
 import ./tls_client
 import ./bindings
+import ./proxy_manager
 
 type
   BrowserPreset* = enum
