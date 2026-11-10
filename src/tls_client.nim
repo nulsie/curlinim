@@ -32,19 +32,19 @@ type
 
   HttpClient* = ref HttpClientObj
 
-proc `=destroy`(clientObj: var HttpClientObj) =
-  # automatically invoked by nim 2.x when HttpClientObj goes out of scope 
-  # or its ref count drops to zero this prevents go-side session leaks
-  if clientObj.sessionId.len > 0:
-    executeDestroySession(clientObj.sessionId)
-    clientObj.sessionId = ""
-
   # structure representing a form field or file upload part
   MultipartField* = object
     name*: string
     value*: string
     filename*: string     # leave empty if it's a standard text form field
     contentType*: string 
+
+proc `=destroy`(clientObj: var HttpClientObj) =
+  # automatically invoked by nim 2.x when HttpClientObj goes out of scope 
+  # or its ref count drops to zero this prevents go-side session leaks
+  if clientObj.sessionId.len > 0:
+    executeDestroySession(clientObj.sessionId)
+    clientObj.sessionId = ""
 
 proc newHttpClient*(
     profile: ClientProfile = cpChrome133, 
