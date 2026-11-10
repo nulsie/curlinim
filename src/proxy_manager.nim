@@ -1,4 +1,4 @@
-import std/[strutils, random, tables]
+import std/[strutils, random]
 
 # added this to add proxy rotation and options support, this introduces a ProxyRotatot and a http3 proxy guard to prevent the common proxy trap
 type
