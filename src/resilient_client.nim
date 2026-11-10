@@ -137,7 +137,7 @@ proc requestWithRetry*(
       let resp = rc.client.request(httpMethod, url, headers, body)
       
       # handle rate limiting (429) or blocks (403, 503)
-      if resp.status in {429, 403, 503}:
+      if resp.status in [429, 403, 503]:
         echo "[tls-client adaptive] Triggered status code ", resp.status, " on proxy: ", activeProxy
         rc.rotator.markFailure(activeProxy)
         attempt.inc
