@@ -1,4 +1,4 @@
-import std/[json, tables, strutils, times, asyncdispatch, random]
+import std/[json, tables, strutils, times, asyncdispatch, random, os]
 import ./tls_client
 import ./proxy_manager
 
