@@ -58,7 +58,7 @@ proc ensureBinaryExists*(libPath: string) =
   if binaryExists and currentVersion == TlsClientVersion:
     return
 
-  let dir = extractFileDir(libPath)
+  let dir = parentDir(libPath)
   if dir.len > 0 and not dirExists(dir):
     createDir(dir)
 
