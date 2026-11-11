@@ -1,4 +1,4 @@
-import std/[json, tables, options, strutils, times, random, asyncdispatch, threadpool, os]
+import std/[json, tables, strutils, times, random, asyncdispatch, threadpool]
 import ./bindings
 import ./proxy_manager
 

@@ -1,4 +1,4 @@
-import std/[json, tables, strutils]
+import std/[json, tables]
 import ./tls_client
 
 type
