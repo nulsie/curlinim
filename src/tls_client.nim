@@ -147,7 +147,7 @@ proc request*(
     httpMethod: string, 
     url: string, 
     headers: Table[string, string] = initTable[string, string](),
-    body: string = ""
+    body: string = "",
     proxy: string = ""
 ): Response =
   # to use the override if provided ifnot fallback to client default
