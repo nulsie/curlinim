@@ -130,11 +130,12 @@ proc requestWithRetry*(
   var attempt = 0
   
   while attempt <= rc.maxRetries:
+    # get the next healthy proxy from the rotation pool
     let activeProxy = rc.rotator.getNextHealthyProxy()
-    rc.client.currentProxy = activeProxy
 
     try:
-      let resp = rc.client.request(httpMethod, url, headers, body)
+      # pass the proxy explicitly per request without mutating shared client state
+      let resp = rc.client.request(httpMethod, url, headers, body, proxy = activeProxy)
       
       # handle rate limiting (429) or blocks (403, 503)
       if resp.status in [429, 403, 503]:

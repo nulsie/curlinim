@@ -148,8 +148,10 @@ proc request*(
     url: string, 
     headers: Table[string, string] = initTable[string, string](),
     body: string = ""
+    proxy: string = ""
 ): Response =
-  var activeProxy = client.currentProxy
+  # to use the override if provided ifnot fallback to client default
+  var activeProxy = if proxy.len > 0: proxy else: client.currentProxy
   var allowHttp3 = client.enableHttp3
     
   if activeProxy.len > 0:
@@ -171,6 +173,12 @@ proc request*(
   payload["requestMethod"] = %httpMethod.toUpperAscii()
   payload["headers"] = headerJson
   payload["headerOrder"] = headerOrder
+
+  if activeProxy.len > 0:
+    payload["proxyUrl"] = %activeProxy
+  else:
+    if payload.hasKey("proxyUrl"):
+      payload.delete("proxyUrl")
 
   if body.len > 0:
     payload["requestBody"] = %body
