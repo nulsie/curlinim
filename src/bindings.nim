@@ -14,7 +14,7 @@ var
 # define other platform's default library paths too
 # target release version tied to this wrapper version
 const 
-  TlsClientVersion* = "v1.16.0"
+  TlsClientVersion* = "v1.18.1"
   defaultLibPath* = 
     when defined(windows): "binaries/libtls-client.dll"
     elif defined(macosx): "binaries/libtls-client.dylib"
