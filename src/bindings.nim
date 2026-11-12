@@ -45,17 +45,28 @@ proc getDownloadUrl*(): string =
 proc ensureBinaryExists*(libPath: string) =
   let versionFilePath = libPath & ".version"
   let binaryExists = fileExists(libPath)
-  var currentVersion = ""
 
+  # If the binary is already placed manually, automatically stamp it 
+  # and skip downloading entirely.
+  if binaryExists:
+    if not fileExists(versionFilePath):
+      try:
+        writeFile(versionFilePath, TlsClientVersion)
+        echo "[tls-client] Local binary detected. Automatically wrote version stamp: ", TlsClientVersion
+      except:
+        discard
+    return
+  
+  var currentVersion = ""
   # read existing version metadata if present
-  if binaryExists and fileExists(versionFilePath):
+  if fileExists(versionFilePath):
     try:
       currentVersion = readFile(versionFilePath).strip()
     except:
       currentVersion = ""
 
   # if binary exists and version matches then gud
-  if binaryExists and currentVersion == TlsClientVersion:
+  if currentVersion == TlsClientVersion:
     return
 
   let dir = parentDir(libPath)
