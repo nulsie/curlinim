@@ -1,4 +1,4 @@
-import std/[json, tables, strutils, times, random, asyncdispatch, threadpool]
+import std/[json, tables, strutils, times, random, asyncdispatch, threadpool, locks]
 import ./bindings
 import ./proxy_manager
 
@@ -31,6 +31,10 @@ type
     basePayloadJson*: JsonNode # to cache json template
 
   HttpClient* = ref HttpClientObj
+
+  ProtectedClient* = ref object
+    client*: HttpClient
+    lock*: Lock
 
   # structure representing a form field or file upload part
   MultipartField* = object
@@ -109,6 +113,18 @@ proc newHttpClient*(
   result.enableHttp3 = enableHttp3
   result.pseudoHeaderOrder = pseudoHeaderOrder
   result.basePayloadJson = baseJson
+
+# method to create a thread-safe protected client container
+proc newProtectedClient*(client: HttpClient): ProtectedClient =
+  new(result)
+  result.client = client
+  initLock(result.lock)
+
+proc close*(protectedClient: ProtectedClient) =
+  if protectedClient == nil or protectedClient.client == nil: return
+  withLock protectedClient.lock:
+    protectedClient.client.close()
+  deinitLock(protectedClient.lock)
 
 proc rotateProxy*(client: HttpClient) =
   if client == nil: return
@@ -224,6 +240,40 @@ proc request*(
     rawJson: jsonRes
   )
 
+# thread-safe async wrappers using ProtectedClient
+
+proc requestAsync*(
+    protectedClient: ProtectedClient, 
+    httpMethod: string, 
+    url: string, 
+    headers: Table[string, string] = initTable[string, string](),
+    body: string = ""
+): Future[Response] {.async.} =
+  let pClient = protectedClient
+  let cMethod = httpMethod
+  let cUrl = url
+  let cHeaders = headers
+  let cBody = body
+
+  # offload request to threadpool safely synchronized via the lock
+  let flowVar = spawn (
+    proc(): Response =
+      withLock pClient.lock:
+        return pClient.client.request(cMethod, cUrl, cHeaders, cBody)
+  )()
+
+  while not isReady(flowVar):
+    await sleepAsync(5)
+  return ^flowVar
+
+proc getAsync*(pc: ProtectedClient, url: string, headers: Table[string, string] = initTable[string, string]()): Future[Response] {.async.} =
+  return await pc.requestAsync("GET", url, headers)
+
+proc postAsync*(pc: ProtectedClient, url: string, body: string, headers: Table[string, string] = initTable[string, string]()): Future[Response] {.async.} =
+  return await pc.requestAsync("POST", url, headers, body = body)
+
+# std http shortcuts
+
 proc get*(client: HttpClient, url: string, headers: Table[string, string] = initTable[string, string]()): Response =
   client.request("GET", url, headers)
 
@@ -325,87 +375,6 @@ proc streamRequest*(
   for chunk in response.iterContent(chunkSize):
     onChunk(chunk)
   return response
-
-# --- async wrappers ---
-
-proc requestAsync*(
-    client: HttpClient, 
-    httpMethod: string, 
-    url: string, 
-    headers: Table[string, string] = initTable[string, string](),
-    body: string = ""
-): Future[Response] {.async.} =
-  # pass isolated parameters instead of spawning the raw client ref containing lock
-  let cClient = client
-  let cMethod = httpMethod
-  let cUrl = url
-  let cHeaders = headers
-  let cBody = body
-
-  let flowVar = spawn cClient.request(cMethod, cUrl, cHeaders, cBody)
-  while not isReady(flowVar):
-    await sleepAsync(5)
-  return ^flowVar
-
-proc getAsync*(client: HttpClient, url: string, headers: Table[string, string] = initTable[string, string]()): Future[Response] {.async.} =
-  return await client.requestAsync("GET", url, headers)
-
-proc postAsync*(client: HttpClient, url: string, body: string, headers: Table[string, string] = initTable[string, string]()): Future[Response] {.async.} =
-  return await client.requestAsync("POST", url, headers, body = body)
-
-proc postMultipartAsync*(
-    client: HttpClient, 
-    url: string, 
-    fields: seq[MultipartField], 
-    headers: Table[string, string] = initTable[string, string]()
-): Future[Response] {.async.} =
-  let cClient = client
-  let cUrl = url
-  let cFields = fields
-  let cHeaders = headers
-
-  let flowVar = spawn cClient.postMultipart(cUrl, cFields, cHeaders)
-  while not isReady(flowVar):
-    await sleepAsync(5)
-  return ^flowVar
-
-proc putAsync*(
-    client: HttpClient, 
-    url: string, 
-    body: string = "", 
-    headers: Table[string, string] = initTable[string, string]()
-): Future[Response] {.async.} =
-  return await client.requestAsync("PUT", url, headers, body = body)
-
-proc deleteAsync*(
-    client: HttpClient, 
-    url: string, 
-    headers: Table[string, string] = initTable[string, string]()
-): Future[Response] {.async.} =
-  return await client.requestAsync("DELETE", url, headers)
-
-proc patchAsync*(
-    client: HttpClient, 
-    url: string, 
-    body: string = "", 
-    headers: Table[string, string] = initTable[string, string]()
-): Future[Response] {.async.} =
-  return await client.requestAsync("PATCH", url, headers, body = body)
-
-proc headAsync*(
-    client: HttpClient, 
-    url: string, 
-    headers: Table[string, string] = initTable[string, string]()
-): Future[Response] {.async.} =
-  return await client.requestAsync("HEAD", url, headers)
-
-# --- destructor hooks ---
-
-proc close*(client: HttpClient) =
-  if client == nil: return
-  if client.sessionId.len > 0:
-    executeDestroySession(client.sessionId)
-    client.sessionId = ""
 
 # --- cookie jar export/import utils ---
 
