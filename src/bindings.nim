@@ -10,6 +10,47 @@ var
   reqProc: TlsRequestProc
   destroyProc: DestroySessionProc
   freeProc: FreeMemoryProc
+  wsConnectProc: TlsRequestProc
+  wsReadProc: TlsRequestProc
+  wsWriteProc: TlsRequestProc
+  wsCloseProc: TlsRequestProc
+
+proc callFfiJson(fn: TlsRequestProc, payloadJson: string, procName: string): JsonNode =
+  if fn == nil:
+    raise newException(Defect, "TLS client symbol '" & procName & "' not loaded or unsupported in this binary version.")
+  let cPayload = cstring(payloadJson)
+  let cResponse = fn(cPayload)
+  let rawStr = $cResponse
+  if freeProc != nil and cResponse != nil:
+    freeProc(cResponse)
+  result = parseJson(rawStr)
+
+# inside loadTlsClient*(libPath: string = defaultLibPath) after loading freeMemory
+proc loadWebSocketSymbols*() =
+  if lib == nil: return
+  let connSym = lib.symAddr("wsConnect")
+  if connSym != nil: wsConnectProc = cast[TlsRequestProc](connSym)
+
+  let readSym = lib.symAddr("wsRead")
+  if readSym != nil: wsReadProc = cast[TlsRequestProc](readSym)
+
+  let writeSym = lib.symAddr("wsWrite")
+  if writeSym != nil: wsWriteProc = cast[TlsRequestProc](writeSym)
+
+  let closeSym = lib.symAddr("wsClose")
+  if closeSym != nil: wsCloseProc = cast[TlsRequestProc](closeSym)
+
+proc executeWsConnect*(payloadJson: string): JsonNode =
+  callFfiJson(wsConnectProc, payloadJson, "wsConnect")
+
+proc executeWsRead*(payloadJson: string): JsonNode =
+  callFfiJson(wsReadProc, payloadJson, "wsRead")
+
+proc executeWsWrite*(payloadJson: string): JsonNode =
+  callFfiJson(wsWriteProc, payloadJson, "wsWrite")
+
+proc executeWsClose*(payloadJson: string): JsonNode =
+  callFfiJson(wsCloseProc, payloadJson, "wsClose")
 
 # define other platform's default library paths too
 # target release version tied to this wrapper version
