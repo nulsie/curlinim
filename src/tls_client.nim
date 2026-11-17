@@ -356,19 +356,19 @@ proc postMultipart*(
     isByteResponse: bool = false
 ): Response =
   randomize()
-  let boundary = "----NimTlsClientBoundary" & $rand(100_000_000..999_999_999)[cite: 1]
-  let bodyStr = buildMultipartBody(fields, boundary)[cite: 1]
+  let boundary = "----NimTlsClientBoundary" & $rand(100_000_000..999_999_999)
+  let bodyStr = buildMultipartBody(fields, boundary)
 
   # case-insensitive check to see if content-type was manually supplied
-  var reqHeaders = headers[cite: 1]
-  var hasContentType = false[cite: 1]
-  for k, _ in reqHeaders:[cite: 1]
-    if k.toLowerAscii() == "content-type":[cite: 1]
-      hasContentType = true[cite: 1]
-      break[cite: 1]
+  var reqHeaders = headers
+  var hasContentType = false
+  for k, _ in reqHeaders:
+    if k.toLowerAscii() == "content-type":
+      hasContentType = true
+      break
 
-  if not hasContentType:[cite: 1]
-    reqHeaders["Content-Type"] = "multipart/form-data; boundary=" & boundary[cite: 1]
+  if not hasContentType:
+    reqHeaders["Content-Type"] = "multipart/form-data; boundary=" & boundary
 
   # pass isByteRequest = true so raw binary file bytes in bodyStr are base64-encoded
   # before crossing the json cffi boundary, preventing utf8 corruption
@@ -380,7 +380,7 @@ proc postMultipart*(
     proxy = proxy,
     isByteRequest = true,
     isByteResponse = isByteResponse
-  )[cite: 1]
+  )
 
 # --- response streaming & chunked iteration ---
 
