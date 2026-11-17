@@ -45,10 +45,23 @@ type
 
 proc `=destroy`(clientObj: var HttpClientObj) =
   # automatically invoked by nim 2.x when HttpClientObj goes out of scope 
-  # or its ref count drops to zero this prevents go-side session leaks
+  # now wrapped in try-except to prevent unhandled exceptions inside destructors
   if clientObj.sessionId.len > 0:
-    executeDestroySession(clientObj.sessionId)
+    try:
+      executeDestroySession(clientObj.sessionId)
+    except:
+      discard
     clientObj.sessionId = ""
+
+# added  an explicit close proc for HttpClient so ProtectedClient can call it
+proc close*(client: HttpClient) =
+  if client == nil: return
+  if client.sessionId.len > 0:
+    try:
+      executeDestroySession(client.sessionId)
+    except:
+      discard
+    client.sessionId = ""
 
 proc newHttpClient*(
     profile: ClientProfile = cpChrome133, 
@@ -204,10 +217,17 @@ proc request*(
 
   let rawResStr = executeRequest($payload)
   let jsonRes = parseJson(rawResStr)
-
-  if jsonRes.hasKey("error") and jsonRes["error"].getBool():
+  
+  var hasError = false
+  if jsonRes.hasKey("error") and jsonRes["error"].kind == JBool and jsonRes["error"].getBool():
+    hasError = true
+  elif jsonRes.hasKey("status") and jsonRes["status"].kind == JInt and jsonRes["status"].getInt() == 0:
+    hasError = true
+  
+  if hasError:
     let errMessage = 
-      if jsonRes.hasKey("message"): jsonRes["message"].getStr()
+      if jsonRes.hasKey("message") and jsonRes["message"].getStr().len > 0: jsonRes["message"].getStr()
+      elif jsonRes.hasKey("body") and jsonRes["body"].getStr().len > 0: jsonRes["body"].getStr()
       elif jsonRes.hasKey("status"): 
         if jsonRes["status"].kind == JString: jsonRes["status"].getStr()
         elif jsonRes["status"].kind == JInt: $jsonRes["status"].getInt()
