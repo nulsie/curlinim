@@ -1,4 +1,4 @@
-import std/[json, tables, strutils, times, random, asyncdispatch, threadpool, locks]
+import std/[json, tables, strutils, times, random, asyncdispatch, threadpool, locks, base64]
 import ./bindings
 import ./proxy_manager
 
@@ -164,9 +164,10 @@ proc request*(
     url: string, 
     headers: Table[string, string] = initTable[string, string](),
     body: string = "",
-    proxy: string = ""
+    proxy: string = "",
+    isByteRequest: bool = false,
+    isByteResponse: bool = false
 ): Response =
-  # to use the override if provided ifnot fallback to client default
   var activeProxy = if proxy.len > 0: proxy else: client.currentProxy
   var allowHttp3 = client.enableHttp3
     
@@ -181,27 +182,25 @@ proc request*(
     headerJson[k] = %v
     headerOrder.add(%k)
 
-  # zero-alloc optim copy base template instead of rebuilding
   var payload = client.basePayloadJson.copy()
 
-  # inject dynamic req-specific fields
   payload["requestUrl"] = %url
   payload["requestMethod"] = %httpMethod.toUpperAscii()
   payload["headers"] = headerJson
   payload["headerOrder"] = headerOrder
+  payload["isByteRequest"] = %isByteRequest
+  payload["isByteResponse"] = %isByteResponse
 
   if activeProxy.len > 0:
     payload["proxyUrl"] = %activeProxy
-  else:
-    if payload.hasKey("proxyUrl"):
-      payload.delete("proxyUrl")
+  elif payload.hasKey("proxyUrl"):
+    payload.delete("proxyUrl")
 
   if body.len > 0:
-    payload["requestBody"] = %body
-  else:
-    # safely clear requestBody if it was populated in a previous request loop
-    if payload.hasKey("requestBody"):
-      payload.delete("requestBody")
+    # encode raw binary body to base64 if isByteRequest is enabled
+    payload["requestBody"] = if isByteRequest: %encode(body) else: %body
+  elif payload.hasKey("requestBody"):
+    payload.delete("requestBody")
 
   let rawResStr = executeRequest($payload)
   let jsonRes = parseJson(rawResStr)
@@ -232,13 +231,34 @@ proc request*(
       elif v.kind == JString:
         respCookies[k] = v.getStr()
 
+  var finalBody = jsonRes["body"].getStr()
+  
+  # decode data uri back into raw bytes
+  if isByteResponse and finalBody.startsWith("data:"):
+    let commaIdx = finalBody.find(',')
+    if commaIdx != -1:
+      finalBody = decode(finalBody[commaIdx + 1 .. ^1])
+
   Response(
     status: jsonRes["status"].getInt(),
-    body: jsonRes["body"].getStr(),
+    body: finalBody,
     headers: respHeaders,
     cookies: respCookies,
     rawJson: jsonRes
   )
+
+# wrappers for binary payloads
+proc getBytes*(client: HttpClient, url: string, headers: Table[string, string] = initTable[string, string]()): Response =
+  client.request("GET", url, headers, isByteResponse = true)
+
+proc postBytes*(
+    client: HttpClient, 
+    url: string, 
+    rawBytes: string, 
+    headers: Table[string, string] = initTable[string, string](),
+    expectBinaryResponse: bool = false
+): Response =
+  client.request("POST", url, headers, body = rawBytes, isByteRequest = true, isByteResponse = expectBinaryResponse)
 
 # thread-safe async wrappers using ProtectedClient
 
@@ -331,23 +351,36 @@ proc postMultipart*(
     client: HttpClient, 
     url: string, 
     fields: seq[MultipartField], 
-    headers: Table[string, string] = initTable[string, string]()
+    headers: Table[string, string] = initTable[string, string](),
+    proxy: string = "",
+    isByteResponse: bool = false
 ): Response =
-  let boundary = "----NimTlsClientBoundary" & $rand(100_000_000..999_999_999)
-  let bodyStr = buildMultipartBody(fields, boundary)
+  randomize()
+  let boundary = "----NimTlsClientBoundary" & $rand(100_000_000..999_999_999)[cite: 1]
+  let bodyStr = buildMultipartBody(fields, boundary)[cite: 1]
 
   # case-insensitive check to see if content-type was manually supplied
-  var reqHeaders = headers
-  var hasContentType = false
-  for k, _ in reqHeaders:
-    if k.toLowerAscii() == "content-type":
-      hasContentType = true
-      break
+  var reqHeaders = headers[cite: 1]
+  var hasContentType = false[cite: 1]
+  for k, _ in reqHeaders:[cite: 1]
+    if k.toLowerAscii() == "content-type":[cite: 1]
+      hasContentType = true[cite: 1]
+      break[cite: 1]
 
-  if not hasContentType:
-    reqHeaders["Content-Type"] = "multipart/form-data; boundary=" & boundary
+  if not hasContentType:[cite: 1]
+    reqHeaders["Content-Type"] = "multipart/form-data; boundary=" & boundary[cite: 1]
 
-  client.request("POST", url, reqHeaders, bodyStr)
+  # pass isByteRequest = true so raw binary file bytes in bodyStr are base64-encoded
+  # before crossing the json cffi boundary, preventing utf8 corruption
+  client.request(
+    httpMethod = "POST",
+    url = url,
+    headers = reqHeaders,
+    body = bodyStr,
+    proxy = proxy,
+    isByteRequest = true,
+    isByteResponse = isByteResponse
+  )[cite: 1]
 
 # --- response streaming & chunked iteration ---
 
