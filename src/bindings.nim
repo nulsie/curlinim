@@ -55,7 +55,7 @@ proc executeWsClose*(payloadJson: string): JsonNode =
 # define other platform's default library paths too
 # target release version tied to this wrapper version
 const 
-  TlsClientVersion* = "v1.18.1"
+  TlsClientVersion* = "1.18.1"
   defaultLibPath* = 
     when defined(windows): "binaries/libtls-client.dll"
     elif defined(macosx): "binaries/libtls-client.dylib"
@@ -66,19 +66,20 @@ const
 proc getDownloadUrl*(): string =
   when defined(windows):
     when defined(amd64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-windows-amd64-" & TlsClientVersion & ".dll"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-windows-64-" & TlsClientVersion & ".dll"
     else:
-      result = ""
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-windows-32-" & TlsClientVersion & ".dll"
   elif defined(macosx):
     when defined(arm64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-darwin-arm64-" & TlsClientVersion & ".dylib"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-darwin-arm64-" & TlsClientVersion & ".dylib"
     else:
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-darwin-amd64-" & TlsClientVersion & ".dylib"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-darwin-amd64-" & TlsClientVersion & ".dylib"
   else: # linux
     when defined(amd64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-linux-amd64-" & TlsClientVersion & ".so"
+      # to use alpine, ubuntu, or standard xgo linux-amd64
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-linux-ubuntu-amd64-" & TlsClientVersion & ".so"
     elif defined(arm64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/libtls-client-linux-arm64-" & TlsClientVersion & ".so"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-linux-arm64-" & TlsClientVersion & ".so"
     else:
       result = ""
       
