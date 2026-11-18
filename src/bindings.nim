@@ -64,22 +64,24 @@ const
 # added a dynamic lib downloader for simplicity's sake so i and you don't want to manually source tls-client sl
 # this maps the current os and cpu arch to the tls-client release binary
 proc getDownloadUrl*(): string =
+  # Notice the 'v' added right before & TlsClientVersion
+  let tagVersion = "v" & TlsClientVersion
+  
   when defined(windows):
     when defined(amd64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-windows-64-" & TlsClientVersion & ".dll"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & tagVersion & "/tls-client-windows-64-" & TlsClientVersion & ".dll"
     else:
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-windows-32-" & TlsClientVersion & ".dll"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & tagVersion & "/tls-client-windows-32-" & TlsClientVersion & ".dll"
   elif defined(macosx):
     when defined(arm64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-darwin-arm64-" & TlsClientVersion & ".dylib"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & tagVersion & "/tls-client-darwin-arm64-" & TlsClientVersion & ".dylib"
     else:
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-darwin-amd64-" & TlsClientVersion & ".dylib"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & tagVersion & "/tls-client-darwin-amd64-" & TlsClientVersion & ".dylib"
   else: # linux
     when defined(amd64):
-      # to use alpine, ubuntu, or standard xgo linux-amd64
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-linux-ubuntu-amd64-" & TlsClientVersion & ".so"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & tagVersion & "/tls-client-linux-ubuntu-amd64-" & TlsClientVersion & ".so"
     elif defined(arm64):
-      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & TlsClientVersion & "/tls-client-linux-arm64-" & TlsClientVersion & ".so"
+      result = "https://github.com/bogdanfinn/tls-client/releases/download/" & tagVersion & "/tls-client-linux-arm64-" & TlsClientVersion & ".so"
     else:
       result = ""
       
@@ -127,6 +129,9 @@ proc ensureBinaryExists*(libPath: string) =
   echo "[tls-client] Source: ", url
   
   var httpClient = newHttpClient()
+  # add a ua header so gh cdn dusn't block the request
+  httpClient.headers = newHttpHeaders({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NimTlsClient"})
+  
   try:
     httpClient.downloadFile(url, libPath)
     # write version stamp upon successful download
